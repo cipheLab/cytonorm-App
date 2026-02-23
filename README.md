@@ -22,8 +22,8 @@ https://docs.docker.com/get-docker/
 ### 2. Clone the repository
 
 ```bash
-git clone https://github.com/your-username/your-repository.git
-cd your-repository
+git clone https://github.com/cipheLab/cytonorm-App.git
+cd cytonorm-App
 ```
 
 ### 3. Build the Docker image
