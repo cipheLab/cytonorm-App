@@ -11,24 +11,58 @@ It allows users to upload multiple batches of FCS files, select reference files 
 - Training and running CytoNorm2 models for batch normalization  
 - Export of normalized FCS files (optionally decompensated and detransformed)  
 
-## Installation
+## Installation (Docker Recommended)
 
-This app requires the following R packages:
+### 1. Install Docker
+
+Install Docker on your system:
+
+https://docs.docker.com/get-docker/
+
+### 2. Clone the repository
+
+```bash
+git clone https://github.com/your-username/your-repository.git
+cd your-repository
+```
+
+### 3. Build the Docker image
+
+```bash
+docker build -t cytonorm2-shiny .
+```
+### 4. Run the container 
+
+```bash
+docker run -p 3838:3838 \
+  -v /path/to/your/fcs_folder:/data \
+  cytonorm2-shiny
+```
+### 5. Open the application
+Open your browser and go to:
+
+http://localhost:3838
+
+## Installation (Run without Docker )
+If you prefer to run the app locally in R, install the required packages:
 
 ```r
 install.packages(c(
   "shiny", "shinydashboard", "shinycssloaders", "DT", "openxlsx", "rhandsontable", "shinyjs"
 ))
+
+if (!requireNamespace("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+
 BiocManager::install(c(
   "flowCore", "CytoNorm", "FlowCIPHE"
 ))
-
 ```
-Usage
+Then launch:
+
 ```r
-shiny::runApp("path_to_app_folder")
+shiny::runApp("path_to_app")
 ```
-
 ## Usage
 
 1. Upload your FCS files batch by batch.
@@ -45,3 +79,5 @@ This Shiny app is an interface for the **CytoNorm2 algorithm** described in:
 **PMID: 39871681 – Van Gassen et al., CytoNorm2: A method for batch normalization of cytometry data, 2023.**
 
 The normalization method comes from this publication and is **not original work of the repository author**.
+
+
