@@ -5,6 +5,7 @@ library(DT)
 library(shinycssloaders)
 library(openxlsx)
 library(shinydashboard)
+library(zip)
 
 
 options(expressions = 5e5, shiny.maxRequestSize = 100 * 1024^3)
@@ -493,8 +494,7 @@ server <- function(input, output, session) {
           }
           
           ff <- arcsinhCIPHE(ff, marker = markers, args = args)
-          print("after transfo")
-          print(ff@exprs)
+      
          return(ff)  
         })
         
@@ -585,10 +585,10 @@ server <- function(input, output, session) {
     
     message("FlowSOM test mode: ", ref_data$mode)
     
-    print("before testCV")
+
     ff <- ref_fs[[1]]         # premier flowFrame
     expr_matrix <- exprs(ff)  # matrice des valeurs
-   print(expr_matrix)
+
     # -----------------------------
     # Pr??parer FlowSOM sur les marqueurs de clustering seulement
     # -----------------------------
@@ -727,7 +727,7 @@ output$cluster_test_plot <- renderPlot({
     
     message("Training mode: ", ref_data$mode)
     
-    print(input$goal_ref_batch)
+   
     
     # --------------------------------
     # Define goal distribution
@@ -750,24 +750,17 @@ output$cluster_test_plot <- renderPlot({
     model <- CytoNorm.train(
       
       files = ref_fs,
-      
       labels = ref_labels,
-      
       channels = input$markers,
-      
       
       nQ = 99,
       
       transformList = NULL,
       
       FlowSOM.params = list(
-        
-        nCells = 50000,
-        
+        nCells = 20000,
         nClus = input$nClusters,
-        
         colsToUse = input$markers_clust
-        
       ),
       
       normParams = list(
@@ -775,13 +768,10 @@ output$cluster_test_plot <- renderPlot({
       ),
       
       seed = 2026,
-      
-      verbose = TRUE,
-      
+      verbose = FALSE,
       recompute = TRUE
       
     )
-
     
 
     # ----------------------------
@@ -855,6 +845,7 @@ output$cluster_test_plot <- renderPlot({
   })
 
   
+  
   output$download_norm <- downloadHandler(
     
     filename = function() {
@@ -865,174 +856,162 @@ output$cluster_test_plot <- renderPlot({
     
     content = function(file) {
       
-      # --------------------------------
-      # 1. Create temporary output folder
-      # --------------------------------
-      
-      outdir <- tempfile("Normalized_")
-      dir.create(outdir, recursive = TRUE)
-      
-      on.exit(
-        unlink(outdir, recursive = TRUE),
-        add = TRUE
-      )
-      
-      # --------------------------------
-      # 2. Get transformation parameters
-      # --------------------------------
-      
-      if (input$transform_mode == "global") {
+      tryCatch({
         
-        markers <- input$markers
-        args <- rep(input$global_cofactor, length(markers))
+        # 1. Temporary output directory
+        outdir <- tempfile("Normalized_")
+        dir.create(outdir, recursive = TRUE)
         
-      } else {
+        on.exit(
+          unlink(outdir, recursive = TRUE, force = TRUE),
+          add = TRUE
+        )
         
-        filtered_table <- rv$transfoTable[
-          !is.na(suppressWarnings(as.numeric(
-            as.character(rv$transfoTable$Arg)
-          ))),
-          ,
-          drop = FALSE
-        ]
-        
-        markers <- filtered_table$Fluo
-        args <- as.numeric(as.character(filtered_table$Arg))
-        
-      }
-      
-      # --------------------------------
-      # 3. Export normalized FCS files
-      # --------------------------------
-      
-      for (i in seq_along(rv$fs_list)) {
-        
-        batch_fs <- rv$fs_list[[i]]
-        
-        batch_design <- rv$design[
-          rv$design$Batch == i,
-          ,
-          drop = FALSE
-        ]
-        
-        if (length(batch_fs) != nrow(batch_design)) {
-          stop(
-            paste("Number of files does not match design in batch", i)
-          )
+        # 2. Transformation parameters
+        if (input$transform_mode == "global") {
+          
+          markers <- input$markers
+          args <- rep(input$global_cofactor, length(markers))
+          
+        } else {
+          
+          filtered_table <- rv$transfoTable[
+            !is.na(suppressWarnings(as.numeric(
+              as.character(rv$transfoTable$Arg)
+            ))),
+            ,
+            drop = FALSE
+          ]
+          
+          markers <- filtered_table$Fluo
+          args <- as.numeric(as.character(filtered_table$Arg))
+          
         }
         
-        for (j in seq_along(batch_fs)) {
+        # 3. Export FCS files
+        for (i in seq_along(rv$fs_list)) {
           
-          ff <- batch_fs[[j]]
+          batch_fs <- rv$fs_list[[i]]
           
-          original_name <- batch_design$File[j]
+          batch_design <- rv$design[
+            rv$design$Batch == i,
+            ,
+            drop = FALSE
+          ]
           
-          safe_name <- gsub(
-            "[^A-Za-z0-9_.-]",
-            "_",
-            original_name
-          )
+          if (length(batch_fs) != nrow(batch_design)) {
+            stop(paste("File/design mismatch in batch", i))
+          }
           
-          # --------------------------------
-          # 4. Inverse transformation
-          # --------------------------------
-          
-          if (!is.null(input$download_mode) &&
-              input$download_mode == "inverse") {
+          for (j in seq_along(batch_fs)) {
             
-            # Inverse arcsinh
-            if (length(markers) == length(args) &&
-                length(markers) > 0) {
-              
-              ff <- inverseArcsinhCIPHE(
-                ff,
-                marker = markers,
-                args = args
-              )
-              
-            }
+            ff <- batch_fs[[j]]
             
-            # Decompensation only if matrix exists
-            spill <- tryCatch(
-              FlowCIPHE::found.spill.CIPHE(ff),
-              error = function(e) NULL
+            original_name <- batch_design$File[j]
+            
+            safe_name <- gsub(
+              "[^A-Za-z0-9_.-]",
+              "_",
+              original_name
             )
             
-            if (!is.null(spill) && length(spill) > 0) {
+            # 4. Inverse transformation
+            if (!is.null(input$download_mode) &&
+                input$download_mode == "inverse") {
               
-              spill_name <- as.character(spill[1])
-              
-              comp_matrix <- ff@description[[spill_name]]
-              
-              if (!is.null(comp_matrix)) {
+              if (length(markers) == length(args) &&
+                  length(markers) > 0) {
                 
-                ff <- flowCore::decompensate(
+                ff <- inverseArcsinhCIPHE(
                   ff,
-                  comp_matrix
+                  marker = markers,
+                  args = args
                 )
                 
               }
               
+              # Decompensation
+              spill <- tryCatch(
+                FlowCIPHE::found.spill.CIPHE(ff),
+                error = function(e) NULL
+              )
+              
+              if (!is.null(spill) && length(spill) > 0) {
+                
+                spill_name <- as.character(spill[1])
+                comp_matrix <- ff@description[[spill_name]]
+                
+                if (!is.null(comp_matrix)) {
+                  
+                  ff <- flowCore::decompensate(
+                    ff,
+                    comp_matrix
+                  )
+                  
+                }
+              }
             }
             
+            # 5. Write FCS
+            fcs_name <- paste0("Norm_", safe_name)
+            
+            if (!grepl("\\.fcs$", fcs_name, ignore.case = TRUE)) {
+              fcs_name <- paste0(fcs_name, ".fcs")
+            }
+            
+            flowCore::write.FCS(
+              ff,
+              filename = file.path(outdir, fcs_name)
+            )
+            
           }
+        }
+        
+        # 6. Check FCS files
+        fcs_files <- list.files(
+          outdir,
+          pattern = "\\.fcs$",
+          full.names = TRUE,
+          ignore.case = TRUE
+        )
+        
+        if (length(fcs_files) == 0) {
+          stop("No FCS files were generated.")
+        }
+        
+        # 7. Create ZIP (Windows compatible)
+        zip::zipr(
+          zipfile = file,
+          files = fcs_files,
+          root = outdir
+        )
+        
+        # 8. Verify ZIP
+        if (!file.exists(file) ||
+            file.info(file)$size == 0) {
           
-          # --------------------------------
-          # 5. Write FCS file
-          # --------------------------------
-          
-          fcs_name <- paste0("Norm_", safe_name)
-          
-          if (!grepl("\\.fcs$", fcs_name, ignore.case = TRUE)) {
-            fcs_name <- paste0(fcs_name, ".fcs")
-          }
-          
-          flowCore::write.FCS(
-            ff,
-            filename = file.path(outdir, fcs_name)
-          )
+          stop("ZIP archive creation failed.")
           
         }
-      }
-      
-      # --------------------------------
-      # 6. Create ZIP archive
-      # --------------------------------
-      
-      fcs_files <- list.files(
-        outdir,
-        pattern = "\\.fcs$",
-        full.names = FALSE,
-        ignore.case = TRUE
-      )
-      
-      if (length(fcs_files) == 0) {
-        stop("No FCS files were generated.")
-      }
-      
-      old_wd <- getwd()
-      
-      setwd(outdir)
-      
-      on.exit(setwd(old_wd), add = TRUE)
-      
-      utils::zip(
-        zipfile = file,
-        files = fcs_files,
-        flags = "-j"
-      )
-      
-      # Check ZIP creation
-      if (!file.exists(file) ||
-          file.info(file)$size == 0) {
         
-        stop("ZIP archive creation failed.")
+        message("ZIP successfully created: ", file)
         
-      }
+      },
+      
+      error = function(e) {
+        
+        message("DOWNLOAD ERROR: ", conditionMessage(e))
+        
+        stop(
+          paste("Error during ZIP export:", conditionMessage(e))
+        )
+        
+      })
       
     }
     
   )
+  
   
   
 }
