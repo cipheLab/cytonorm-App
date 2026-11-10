@@ -141,7 +141,8 @@ ui <- dashboardPage(
                            numericInput("cluster_max",
                                         "Max clusters",
                                         value = 20,
-                                        min = 5)
+                                        min = 5,
+                                        max=25)
                     ),
                     column(4,
                            numericInput("cluster_step",

@@ -39,6 +39,27 @@ server <- function(input, output, session) {
     log = "",
     transfoTable=NULL
   )
+  build_batch_aggregates <- function(paths_list,
+                                     n_cells_per_file = 10000) {
+    
+    aggregates <- lapply(seq_along(paths_list), function(i) {
+      
+      files <- paths_list[[i]]
+      
+      req(length(files) > 0)
+      
+      message("Creating aggregate for batch ", i)
+      
+      CytoNorm::AggregateFlowFrames(
+        fileNames = files,
+        cTotal = length(files) * n_cells_per_file
+      )
+    })
+    
+    names(aggregates) <- paste0("Batch_", seq_along(aggregates))
+    
+    aggregates
+  }
   output$batch_upload_ui <- renderUI({
     req(input$n_batches)
     
@@ -98,6 +119,7 @@ server <- function(input, output, session) {
         batch_i <- i
         observeEvent(input[[paste0("batch_", batch_i)]], {
           files_input <- input[[paste0("batch_", batch_i)]]
+          rv$paths_list[[batch_i]] <- files_input$datapath
           req(files_input)
           
           fs_list <- lapply(seq_len(nrow(files_input)), function(j) {
@@ -125,12 +147,24 @@ server <- function(input, output, session) {
           )
           # UI Reference pour ce batch
           output[[paste0("ref_ui_", batch_i)]] <- renderUI({
-            selectInput(paste0("ref_files_", batch_i),
-                        "Select reference file(s)",
-                        choices = files_input$name,
-                        multiple = TRUE)
             
-     
+            tagList(
+              
+              selectInput(
+                paste0("ref_files_", batch_i),
+                "Select reference file(s)",
+                choices = files_input$name,
+                multiple = TRUE
+              ),
+              
+              helpText(
+                "Select at least one Reference in every batch. ",
+                "If no Reference is selected in any batch, ",
+                "CytoNorm will automatically create batch aggregates."
+              )
+              
+            )
+            
           })
         }, ignoreNULL = TRUE)
       })
@@ -282,7 +316,115 @@ server <- function(input, output, session) {
                              readOnly = FALSE)
   })
   cofactor_values <- reactiveVal(NULL)
-
+  build_training_references <- function() {
+    
+    n_batches <- length(rv$fs_list)
+    
+    # Find selected references in each batch
+    refs_per_batch <- lapply(seq_len(n_batches), function(i) {
+      
+      d <- rv$design[rv$design$Batch == i, , drop = FALSE]
+      
+      which(d$Type == "Reference")
+      
+    })
+    
+    has_reference <- lengths(refs_per_batch) > 0
+    
+    # ------------------------------------
+    # CASE 1: Dedicated controls available
+    # ------------------------------------
+    
+    if (all(has_reference)) {
+      
+      message("Using dedicated reference controls")
+      
+      ref_files <- list()
+      
+      ref_labels <- c()
+      
+      for (i in seq_len(n_batches)) {
+        
+        idx <- refs_per_batch[[i]]
+        
+        ref_files <- c(
+          ref_files,
+          rv$fs_list[[i]][idx]
+        )
+        
+        ref_labels <- c(
+          ref_labels,
+          rep(as.character(i), length(idx))
+        )
+        
+      }
+      
+      ref_fs <- as(ref_files, "flowSet")
+      
+      return(list(
+        files = ref_fs,
+        labels = ref_labels,
+        mode = "dedicated"
+      ))
+      
+    }
+    
+    # ------------------------------------
+    # CASE 2: No dedicated controls
+    # ------------------------------------
+    
+    if (!any(has_reference)) {
+      
+      message("Using CytoNorm without dedicated controls")
+      
+      aggregate_frames <- lapply(seq_len(n_batches), function(i) {
+        
+        batch_files <- as(rv$fs_list[[i]], "flowSet")
+        
+        n_files <- length(rv$fs_list[[i]])
+        
+        # 10,000 cells per original FCS file
+        total_cells <- n_files * 10000
+        
+        set.seed(2026 + i)
+        
+        aggregate <- FlowSOM::AggregateFlowFrames(
+          fileNames = batch_files,
+          cTotal = total_cells,
+          silent = TRUE
+        )
+        
+        return(aggregate)
+        
+      })
+      
+      names(aggregate_frames) <- paste0(
+        "Batch_",
+        seq_len(n_batches)
+      )
+      
+      ref_fs <- as(aggregate_frames, "flowSet")
+      
+      ref_labels <- as.character(seq_len(n_batches))
+      
+      return(list(
+        files = ref_fs,
+        labels = ref_labels,
+        mode = "aggregated"
+      ))
+      
+    }
+    
+    # ------------------------------------
+    # CASE 3: Incomplete reference selection
+    # ------------------------------------
+    
+    stop(
+      "Select at least one Reference in every batch, ",
+      "or select no References in any batch."
+    )
+    
+  }
   observeEvent(input$apply_transform, {
     tryCatch({
     showModal(modalDialog(
@@ -317,7 +459,7 @@ server <- function(input, output, session) {
 
      
     }
-    
+
     total_batches <- length(rv$fs_list)
 
     rv$args <- args  
@@ -331,26 +473,29 @@ server <- function(input, output, session) {
           req(inherits(ff, "flowFrame"))  # V??rifie que c'est bien un flowFrame
           
           if (isTRUE(input$apply_comp)) {
+            
             spill <- tryCatch(
               FlowCIPHE::found.spill.CIPHE(ff),
               error = function(e) NULL
             )
             
             if (!is.null(spill) && length(spill) > 0) {
-              spill_name <- spill[1]
-              ff <- flowCore::compensate(
-                ff,
-                ff@description[[spill_name]]
-              )
-            } else {
-              message("No compensation matrix found: file kept unchanged.")
+              
+              spill_name <- as.character(spill[1])
+              comp_matrix <- ff@description[[spill_name]]
+              
+              if (!is.null(comp_matrix)) {
+                ff <- flowCore::compensate(ff, comp_matrix)
+                message("Compensation applied")
+              }
+              
             }
           }
           
           ff <- arcsinhCIPHE(ff, marker = markers, args = args)
           print("after transfo")
           print(ff@exprs)
-          return(ff)  
+         return(ff)  
         })
         
         
@@ -385,11 +530,38 @@ server <- function(input, output, session) {
     if (nrow(d) == 0)
       return("No files uploaded")
     
-    refs_per_batch <- tapply(d$Type == "Reference", d$Batch, sum)
+    # Check that every batch contains at least one FCS file
+    if (length(rv$fs_list) < input$n_batches) {
+      return("Upload files for every batch")
+    }
     
-    if (any(is.na(refs_per_batch)) || any(refs_per_batch == 0))
-      return("Each batch must have at least 1 Reference")
+    for (i in seq_len(input$n_batches)) {
+      
+      if (is.null(rv$fs_list[[i]]) || length(rv$fs_list[[i]]) == 0) {
+        return("Each batch must contain at least one FCS file")
+      }
+      
+    }
     
+    # References must be selected in ALL batches or in NONE
+    refs_per_batch <- vapply(
+      seq_len(input$n_batches),
+      function(i) {
+        sum(
+          d$Batch == i &
+            d$Type == "Reference"
+        )
+      },
+      integer(1)
+    )
+    
+    if (any(refs_per_batch > 0) && any(refs_per_batch == 0)) {
+      
+      return(
+        "Select at least one Reference in every batch, or none in all batches"
+      )
+      
+    }
     if (length(unique(d$Batch)) < 2)
       return("At least 2 batches required")
     
@@ -409,23 +581,13 @@ server <- function(input, output, session) {
       footer = NULL
     ))
     
-    # -----------------------------
-    # Pr??parer r??f??rences en FlowSet
-    # -----------------------------
-    ref_files <- list()
-    ref_labels <- c()
+    # Build references automatically
+    ref_data <- build_training_references()
     
-    for (i in 1:input$n_batches) {
-      d <- rv$design[rv$design$Batch == i, ]
-      ref_idx <- which(d$Type == "Reference")
-      if (length(ref_idx) > 0) {
-        ref_files <- c(ref_files, rv$fs_list[[i]][ref_idx])
-        ref_labels <- c(ref_labels, rep(i, length(ref_idx)))
-      }
-    }
+    ref_fs <- ref_data$files
     
-    # Convertir en FlowSet
-    ref_fs <- as(ref_files, "flowSet")
+    message("FlowSOM test mode: ", ref_data$mode)
+    
     print("before testCV")
     ff <- ref_fs[[1]]         # premier flowFrame
     expr_matrix <- exprs(ff)  # matrice des valeurs
@@ -556,70 +718,74 @@ output$cluster_test_plot <- renderPlot({
       footer = NULL
     ))
     
-    # ----------------------------
-    # Prepare reference files and labels
-    # ----------------------------
-    ref_files <- list()
-    ref_labels <- c()
+
+    # --------------------------------
+    # Build training references
+    # --------------------------------
     
-    for (i in 1:total_batches) {
-      d <- rv$design[rv$design$Batch == i, ]
-      ref_idx <- which(d$Type == "Reference")
-      if (length(ref_idx) > 0) {
-        ref_files <- c(ref_files, rv$fs_list[[i]][ref_idx])
-        ref_labels <- c(ref_labels, rep(i, length(ref_idx)))
-      }
-    }
+    ref_data <- build_training_references()
     
-    library(flowCore)
-  print(input$goal_ref_batch)
-    ref_fs <- as(ref_files, "flowSet")
+    ref_fs <- ref_data$files
+    
+    ref_labels <- ref_data$labels
+    
+    message("Training mode: ", ref_data$mode)
     
     print(input$goal_ref_batch)
     
-    if(input$goal_ref_batch != "None"){
-      goal <- gsub("Batch ", "",input$goal_ref_batch)
+    # --------------------------------
+    # Define goal distribution
+    # --------------------------------
+    
+    if (input$goal_ref_batch == "None") {
       
-   print(goal)
+      goal <- "mean"
       
+    } else {
+      
+      goal <- as.character(goal_batch())
+      
+    }
+    
+    # --------------------------------
+    # Train CytoNorm model
+    # --------------------------------
+    
     model <- CytoNorm.train(
+      
       files = ref_fs,
+      
       labels = ref_labels,
+      
       channels = input$markers,
-      nClusters = input$nClusters,
+      
+      
       nQ = 99,
+      
       transformList = NULL,
+      
       FlowSOM.params = list(
+        
         nCells = 50000,
+        
         nClus = input$nClusters,
+        
         colsToUse = input$markers_clust
+        
       ),
-      normParams = list(goal =  goal),
-      seed=2026,
+      
+      normParams = list(
+        goal = goal
+      ),
+      
+      seed = 2026,
+      
       verbose = TRUE,
+      
       recompute = TRUE
+      
     )
 
-      }else{
-  
-        model <- CytoNorm.train(
-          files = ref_fs,
-          labels = ref_labels,
-          channels = input$markers,
-          nClusters = input$nClusters,
-          nQ = 99,
-          transformList = NULL,
-          FlowSOM.params = list(
-            nCells = 50000, # safer for Shiny
-            nClus = input$nClusters,
-            colsToUse = input$markers_clust
-          ),
-      
-          verbose = TRUE,
-          recompute = TRUE
-        )
-      
-      }
     
 
     # ----------------------------
