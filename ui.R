@@ -121,47 +121,47 @@ ui <- dashboardPage(
       tabItem(tabName = "run",
               fluidPage(
               box(width = 6,
-                  tags$h3(
-                    "Clustering settings",
-                    style = "font-weight: bold; background-color: #fff9c4; padding: 4px; display: inline-block;"
-                  ),
-                  uiOutput("marker_clust_ui"),
-         
-                  br(),
-                  h4("FlowSOM cluster selection"),
-                  
-                  fluidRow(
-                    column(4,
-                           numericInput("cluster_min",
-                                        "Min clusters",
-                                        value = 5,
-                                        min = 2)
-                    ),
-                    column(4,
-                           numericInput("cluster_max",
-                                        "Max clusters",
-                                        value = 20,
-                                        min = 5,
-                                        max=25)
-                    ),
-                    column(4,
-                           numericInput("cluster_step",
-                                        "Step",
-                                        value = 5,
-                                        min = 1)
-                    )
-                  ),
-                  
-                  br(),
-                  
-                  actionButton("test_clusters",
-                               "Test cluster numbers",
-                               class = "btn-primary"),
-                  
-                  br(), br(),
-                  
-                  plotOutput("cluster_test_plot", height = "300px"),
-                  
+                  # tags$h3(
+                  #   "Clustering settings",
+                  #   style = "font-weight: bold; background-color: #fff9c4; padding: 4px; display: inline-block;"
+                  # ),
+                  # uiOutput("marker_clust_ui"),
+                  # 
+                  # br(),
+                  # h4("FlowSOM cluster selection"),
+                  # 
+                  # fluidRow(
+                  #   column(4,
+                  #          numericInput("cluster_min",
+                  #                       "Min clusters",
+                  #                       value = 5,
+                  #                       min = 2)
+                  #   ),
+                  #   column(4,
+                  #          numericInput("cluster_max",
+                  #                       "Max clusters",
+                  #                       value = 20,
+                  #                       min = 5,
+                  #                       max=25)
+                  #   ),
+                  #   column(4,
+                  #          numericInput("cluster_step",
+                  #                       "Step",
+                  #                       value = 5,
+                  #                       min = 1)
+                  #   )
+                  # ),
+                  # 
+                  # br(),
+                  # 
+                  # actionButton("test_clusters",
+                  #              "Test cluster numbers",
+                  #              class = "btn-primary"),
+                  # 
+                  # br(), br(),
+                  # 
+                  # plotOutput("cluster_test_plot", height = "300px"),
+                  # 
                   hr(),
                   
                   tags$h3(
@@ -170,7 +170,7 @@ ui <- dashboardPage(
                   ),
                   
                   numericInput("nClusters",
-                               "Number of clusters (final run)",
+                               "Number of clusters",
                                value = 10,
                                min = 2),
                   

@@ -500,9 +500,6 @@ server <- function(input, output, session) {
         
         
       }
-      
-  
- 
     showNotification("Transformation completed", type = "message")
     shinyjs::enable("apply_transform")
     removeModal()
@@ -674,7 +671,6 @@ output$cluster_test_plot <- renderPlot({
   # Calculer le CV moyen pour chaque cluster
   mean_CV <- sapply(rv$cvs$cvs, mean)
   
-  # V??rifier qu'il n'y a pas de NA / Inf
   valid_idx <- which(is.finite(mean_CV))
   cluster_vals <- cluster_vals[valid_idx]
   mean_CV <- mean_CV[valid_idx]
