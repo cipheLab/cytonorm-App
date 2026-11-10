@@ -858,101 +858,185 @@ output$cluster_test_plot <- renderPlot({
     rv$log
   })
 
+  
   output$download_norm <- downloadHandler(
+    
     filename = function() {
-      paste0("Normalized_FlowFrames.zip")
+      "Normalized_FlowFrames.zip"
     },
+    
+    contentType = "application/zip",
+    
     content = function(file) {
-      # ----------------------------
-      # Show modal: Preparing download
-      # ----------------------------
-      showModal(modalDialog(
-        title = "Preparing download",
-        "Please wait while the normalized files are being processed...",
-        footer = NULL
-      ))
       
-      # ----------------------------
-      # Temporary folder
-      # ----------------------------
-      tmpdir <- tempdir()
-      outdir <- file.path(tmpdir, "Normalized")
-      if (dir.exists(outdir)) unlink(outdir, recursive = TRUE)
-      dir.create(outdir, showWarnings = FALSE)
+      # --------------------------------
+      # 1. Create temporary output folder
+      # --------------------------------
+      
+      outdir <- tempfile("Normalized_")
+      dir.create(outdir, recursive = TRUE)
+      
+      on.exit(
+        unlink(outdir, recursive = TRUE),
+        add = TRUE
+      )
+      
+      # --------------------------------
+      # 2. Get transformation parameters
+      # --------------------------------
+      
       if (input$transform_mode == "global") {
-        args <- rep(input$global_cofactor, length(input$markers))
-        markers<-input$markers
+        
+        markers <- input$markers
+        args <- rep(input$global_cofactor, length(markers))
+        
       } else {
         
-        args <- c(rv$transfoTable[, 2])
-        numeric_rows <- grepl("^[0-9]+(\\.[0-9]+)?$", args)
-        
         filtered_table <- rv$transfoTable[
-          suppressWarnings(!is.na(as.numeric(as.character(rv$transfoTable$Arg)))), 
-          , 
+          !is.na(suppressWarnings(as.numeric(
+            as.character(rv$transfoTable$Arg)
+          ))),
+          ,
           drop = FALSE
         ]
+        
         markers <- filtered_table$Fluo
-        args <- as.numeric(filtered_table[, 2])
-        
-        
+        args <- as.numeric(as.character(filtered_table$Arg))
         
       }
-      # ----------------------------
-      # Process each batch
-      # ----------------------------
+      
+      # --------------------------------
+      # 3. Export normalized FCS files
+      # --------------------------------
+      
       for (i in seq_along(rv$fs_list)) {
+        
         batch_fs <- rv$fs_list[[i]]
-        batch_design <- rv$design[rv$design$Batch == i, ]
+        
+        batch_design <- rv$design[
+          rv$design$Batch == i,
+          ,
+          drop = FALSE
+        ]
+        
+        if (length(batch_fs) != nrow(batch_design)) {
+          stop(
+            paste("Number of files does not match design in batch", i)
+          )
+        }
         
         for (j in seq_along(batch_fs)) {
-          ff <- batch_fs[[j]]
-          original_name <- batch_design$File[j]
-          safe_name <- gsub("[^A-Za-z0-9_.-]", "_", original_name)
           
-          # -------------------------------
-          # Mode inverse
-          # -------------------------------
-          if (!is.null(input$download_mode) && input$download_mode == "inverse") {
-      
-
-            # 2. D??s-transformation arcsinh
-            if (!is.null(args) && length(args) == length(markers)) {
-              print("start inv arcsinh")
-              print(markers)
-              print(args)
-              ff <- inverseArcsinhCIPHE(ff, marker = markers, args =args)
-              print(ff@exprs)
+          ff <- batch_fs[[j]]
+          
+          original_name <- batch_design$File[j]
+          
+          safe_name <- gsub(
+            "[^A-Za-z0-9_.-]",
+            "_",
+            original_name
+          )
+          
+          # --------------------------------
+          # 4. Inverse transformation
+          # --------------------------------
+          
+          if (!is.null(input$download_mode) &&
+              input$download_mode == "inverse") {
+            
+            # Inverse arcsinh
+            if (length(markers) == length(args) &&
+                length(markers) > 0) {
+              
+              ff <- inverseArcsinhCIPHE(
+                ff,
+                marker = markers,
+                args = args
+              )
+              
             }
-
-            # 1. D??s-compensation si disponible
-            spill <- FlowCIPHE::found.spill.CIPHE(ff)
-
-            if (!is.null(spill)) {
-              spill<-spill[1]
-
-              ff <- flowCore::decompensate(ff, ff@description[[spill]])
+            
+            # Decompensation only if matrix exists
+            spill <- tryCatch(
+              FlowCIPHE::found.spill.CIPHE(ff),
+              error = function(e) NULL
+            )
+            
+            if (!is.null(spill) && length(spill) > 0) {
+              
+              spill_name <- as.character(spill[1])
+              
+              comp_matrix <- ff@description[[spill_name]]
+              
+              if (!is.null(comp_matrix)) {
+                
+                ff <- flowCore::decompensate(
+                  ff,
+                  comp_matrix
+                )
+                
+              }
+              
             }
+            
           }
           
-          # Nom du fichier
+          # --------------------------------
+          # 5. Write FCS file
+          # --------------------------------
+          
           fcs_name <- paste0("Norm_", safe_name)
-          write.FCS(ff, filename = file.path(outdir, fcs_name))
+          
+          if (!grepl("\\.fcs$", fcs_name, ignore.case = TRUE)) {
+            fcs_name <- paste0(fcs_name, ".fcs")
+          }
+          
+          flowCore::write.FCS(
+            ff,
+            filename = file.path(outdir, fcs_name)
+          )
+          
         }
       }
-    
-      # ----------------------------
-      # Create zip
-      # ----------------------------
-      old_wd <- setwd(outdir)
-      on.exit(setwd(old_wd))
-      zip(zipfile = file, files = list.files())
       
-      # ----------------------------
-      # Close modal
-      # ----------------------------
-      removeModal()
+      # --------------------------------
+      # 6. Create ZIP archive
+      # --------------------------------
+      
+      fcs_files <- list.files(
+        outdir,
+        pattern = "\\.fcs$",
+        full.names = FALSE,
+        ignore.case = TRUE
+      )
+      
+      if (length(fcs_files) == 0) {
+        stop("No FCS files were generated.")
+      }
+      
+      old_wd <- getwd()
+      
+      setwd(outdir)
+      
+      on.exit(setwd(old_wd), add = TRUE)
+      
+      utils::zip(
+        zipfile = file,
+        files = fcs_files,
+        flags = "-j"
+      )
+      
+      # Check ZIP creation
+      if (!file.exists(file) ||
+          file.info(file)$size == 0) {
+        
+        stop("ZIP archive creation failed.")
+        
+      }
+      
     }
+    
   )
+  
   
 }
