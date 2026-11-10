@@ -331,26 +331,19 @@ server <- function(input, output, session) {
           req(inherits(ff, "flowFrame"))  # V??rifie que c'est bien un flowFrame
           
           if (isTRUE(input$apply_comp)) {
-            
             spill <- tryCatch(
               FlowCIPHE::found.spill.CIPHE(ff),
               error = function(e) NULL
             )
             
             if (!is.null(spill) && length(spill) > 0) {
-              
               spill_name <- spill[1]
-              spill_matrix <- ff@description[[spill_name]]
-              
-              if (!is.null(spill_matrix)) {
-                ff <- flowCore::compensate(ff, spill_matrix)
-                message("Compensation applied.")
-              } else {
-                message("No compensation matrix: file kept uncompensated.")
-              }
-              
+              ff <- flowCore::compensate(
+                ff,
+                ff@description[[spill_name]]
+              )
             } else {
-              message("No compensation matrix: file kept uncompensated.")
+              message("No compensation matrix found: file kept unchanged.")
             }
           }
           
