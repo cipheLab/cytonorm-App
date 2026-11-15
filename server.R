@@ -1,8 +1,8 @@
-library(shiny)
+ library(shiny)
 library(CytoNorm)
 library(flowCore)
 library(DT)
-library(shinycssloaders)
+library(shinycssloaders) 
 library(openxlsx)
 library(shinydashboard)
 library(zip)
@@ -849,9 +849,12 @@ output$cluster_test_plot <- renderPlot({
   output$download_norm <- downloadHandler(
     
     filename = function() {
-      "Normalized_FlowFrames.zip"
+      paste0(
+        "CytoNorm_",
+        format(Sys.time(), "%Y-%m-%d_%H-%M-%S"),
+        ".zip"
+      )
     },
-    
     contentType = "application/zip",
     
     content = function(file) {
